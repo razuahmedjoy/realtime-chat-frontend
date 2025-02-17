@@ -1,0 +1,103 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* {
+    scroll-behavior: smooth;
+}
+
+
+.ChatWindow::-webkit-scrollbar {
+    width: 4px;
+    /* Make the scrollbar thinner */
+
+}
+
+.ReactModal__Overlay.ReactModal__Overlay--after-open {
+    background-color: rgb(110 110 110 / 75%) !important;
+}
+
+
+.ChatWindow::-webkit-scrollbar-thumb {
+    background: #888;
+    border-radius: 10px;
+    -webkit-border-radius: 10px;
+    -moz-border-radius: 10px;
+    -ms-border-radius: 10px;
+    -o-border-radius: 10px;
+}
+
+.ChatWindow::-webkit-scrollbar-thumb:hover {
+    background: #555;
+    /* Darker color on hover */
+}
+
+.ChatWindow::-webkit-scrollbar-track {
+    background: #f1f1f1;
+    /* Scrollbar track color */
+}
+
+.ChatWindow {
+    scrollbar-width: thin;
+    /* For Firefox: make the scrollbar thin */
+    scrollbar-color: #888 #f1f1f1;
+    /* Thumb and track colors for Firefox */
+}
+
+
+.message-container {
+    position: relative;
+}
+
+.relative {
+    position: relative;
+}
+
+button {
+    cursor: pointer;
+}
+
+.absolute {
+    position: absolute;
+}
+
+.top-0 {
+    top: 0;
+}
+
+.right-0 {
+    right: 0;
+}
+
+.top-8 {
+    top: 2rem;
+    /* Adjust as necessary */
+}
+
+.bg-white {
+    background-color: white;
+}
+
+.text-black {
+    color: black;
+}
+
+.p-2 {
+    padding: 8px;
+}
+
+.rounded-md {
+    border-radius: 8px;
+}
+
+.shadow-lg {
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+.text-red-600 {
+    color: #d9534f;
+}
+
+button:hover {
+    opacity: 0.7;
+}
