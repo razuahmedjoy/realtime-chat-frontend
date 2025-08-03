@@ -1,4 +1,3 @@
-
 import { useEffect, useRef, useState } from "react";
 import { useChatStore } from "../../store/chatStore";
 import axiosInstance from "../../utils/axiosInstance";
@@ -7,9 +6,8 @@ import AOS from "aos";
 import "aos/dist/aos.css";
 import { ReactMic } from "react-mic";
 import Modal from "react-modal";
-import ChatAudioPlayer from "./ChatAudioPlayer";
-import forge from 'node-forge';
-import { AES, enc } from "crypto-js";
+import transcriptionIcon from "../../assets/transcription.png";
+
 import toast from "react-hot-toast";
 const customStyles = {
     content: {
@@ -19,11 +17,18 @@ const customStyles = {
         bottom: 'auto',
         marginRight: '-50%',
         transform: 'translate(-50%, -50%)',
-
-
     },
 };
 
+const transcriptionStyles = {
+    marginBottom: '8px',
+    fontSize: '0.8em',
+    padding: '8px',
+    backgroundColor: '#f5f5f5',
+    borderRadius: '4px',
+    color: '#333',
+    maxWidth: '550px',
+};
 
 Modal.setAppElement('#root');
 
@@ -36,6 +41,8 @@ const ChatWindow = () => {
     const [otherUserTyping, setOtherUserTyping] = useState(""); // Other user's typing status
     const typingTimeoutRef = useRef(null);
     const [isModalOpen, setIsModalOpen] = useState(false);
+    const [transcription, setTranscription] = useState({});
+    const [isTranscribing, setIsTranscribing] = useState({});
 
     const socketRef = useRef(null);
     const { accessToken } = useAuthStore()
@@ -72,11 +79,11 @@ const ChatWindow = () => {
             // const token = localStorage.getItem("access_token");  // Or wherever your token is stored
             socketRef.current = new WebSocket(`ws://127.0.0.1:8000/ws/chat/${currentChat.chat_id}/?token=${accessToken}`);
 
-  
+
 
 
             socketRef.current.onmessage = (event) => {
-                
+
                 const data = JSON.parse(event.data);
 
                 if (data.type === "message") {
@@ -110,7 +117,7 @@ const ChatWindow = () => {
                     if (data.sender === currentChat.current_user_id) {
                         toast.success("Message deleted successfully");
                     }
-                    else{
+                    else {
                         toast.error("Unsent a message");
                     }
 
@@ -240,6 +247,145 @@ const ChatWindow = () => {
         }
     };
 
+    const handleAutoReply = async () => {
+        try {
+            // Check if there are messages to process
+            if (messages.length === 0) {
+                toast.error("No messages available for auto reply");
+                return;
+            }
+
+            // Get the last 5 messages from the current chat
+            const lastMessages = messages.slice(-5);
+            
+            // Process messages to include both text and audio
+            const processedMessages = [];
+            
+            for (const msg of lastMessages) {
+                if (msg.text && msg.text.trim() !== "") {
+                    // Text message
+                    processedMessages.push({
+                        text: msg.text,
+                        sender: msg.sender,
+                        timestamp: msg.timestamp,
+                        type: 'text'
+                    });
+                } else if (msg.voice_url) {
+                    // Audio message - transcribe it
+                    try {
+                        const response = await fetch(msg.voice_url);
+                        const audioBlob = await response.blob();
+                        
+                        const reader = new FileReader();
+                        reader.readAsDataURL(audioBlob);
+                        
+                        const transcribedText = await new Promise((resolve, reject) => {
+                            reader.onloadend = async () => {
+                                try {
+                                    const base64Audio = reader.result.split(',')[1];
+                                    const result = await axiosInstance.post('/chat/transcribe/', {
+                                        audio: base64Audio
+                                    });
+                                    resolve(result.data.transcription);
+                                } catch (error) {
+                                    reject(error);
+                                }
+                            };
+                        });
+                        
+                        processedMessages.push({
+                            text: transcribedText,
+                            sender: msg.sender,
+                            timestamp: msg.timestamp,
+                            type: 'audio_transcribed'
+                        });
+                    } catch (error) {
+                        console.error('Failed to transcribe audio message:', error);
+                        // Skip this audio message if transcription fails
+                    }
+                }
+            }
+
+            if (processedMessages.length === 0) {
+                toast.error("No text or transcribable audio messages available for auto reply");
+                return;
+            }
+
+            toast.loading("Generating auto reply...");
+
+            // Send to backend for GPT processing
+            const response = await axiosInstance.post('/chat/auto-reply/', {
+                messages: processedMessages,
+                chat_id: currentChat.chat_id,
+                recipient: currentChat.participants[1]
+            });
+
+            toast.dismiss();
+
+            if (response.data.success) {
+                // Fill the generated reply into the message input box
+                setNewMessage(response.data.reply_text);
+                toast.success("Auto reply generated and sent!");
+                
+                // Automatically send the message after a short delay
+                setTimeout(() => {
+                    sendMessage();
+                }, 500);
+            } else {
+                toast.error("Failed to generate auto reply");
+            }
+        } catch (error) {
+            toast.dismiss();
+            console.error('Auto reply error:', error);
+            toast.error('Failed to generate auto reply');
+        }
+    };
+
+    const handleTranscribe = async (messageId, audioUrl) => {
+        // If transcription already exists, remove it (toggle off)
+        if (transcription[messageId]) {
+            setTranscription(prev => {
+                const newTranscription = { ...prev };
+                delete newTranscription[messageId];
+                return newTranscription;
+            });
+            return;
+        }
+
+        try {
+            setIsTranscribing(prev => ({ ...prev, [messageId]: true }));
+
+            // Fetch the audio file
+            const response = await fetch(audioUrl);
+            const audioBlob = await response.blob();
+
+            // Convert to base64
+            const reader = new FileReader();
+            reader.readAsDataURL(audioBlob);
+            reader.onloadend = async () => {
+                const base64Audio = reader.result.split(',')[1];
+
+                // Send to backend for transcription
+                const result = await axiosInstance.post('/chat/transcribe/', {
+                    audio: base64Audio
+                });
+
+                setTranscription(prev => ({
+                    ...prev,
+                    [messageId]: result.data.transcription
+                }));
+                setIsTranscribing(prev => ({ ...prev, [messageId]: false }));
+            };
+        } catch (error) {
+            console.error('Transcription error:', error);
+            toast.error('Failed to transcribe audio');
+            setIsTranscribing(prev => ({ ...prev, [messageId]: false }));
+        }
+    };
+
+    const toggleTranscription = (messageId, audioUrl) => {
+        handleTranscribe(messageId, audioUrl);
+    };
 
     // if messages are loaded, scroll to bottom
     useEffect(() => {
@@ -291,6 +437,13 @@ const ChatWindow = () => {
                                                             >
                                                                 Delete
                                                             </button>
+                                                            <button
+                                                                onClick={() => handleTranscribe(msg.id, msg.voice_url)}
+                                                                className="text-blue-500"
+                                                            >
+                                                                {isTranscribing[msg.id] ? 'Transcribing...' :
+                                                                    transcription[msg.id] ? 'Show Transcription' : 'Transcribe'}
+                                                            </button>
                                                         </div>
                                                     )}
 
@@ -314,40 +467,49 @@ const ChatWindow = () => {
                             }
                             else if (msg.voice_url) {
                                 return (
-                                    <div key={index} className={`flex items-center peer gap-x-2 ${msg.sender === currentChat.current_user_id && 'ms-auto'} `}>
-                                        {
-                                            msg.sender === currentChat.current_user_id && (
-                                                <div
-                                                    className="flex items-center relative"
-                                                >
+                                    <div key={index} className={`flex flex-col peer gap-x-2 ${msg.sender === currentChat.current_user_id && 'ms-auto'} `}>
 
-                                                    <svg onClick={() => toggleMenu(index)} width="16px" height="16px" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" fill="#000000" className="bi bi-three-dots-vertical cursor-pointer">
-                                                        <path d="M9.5 13a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0zm0-5a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0zm0-5a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0z" />
-                                                    </svg>
-
-                                                    {showMenu === index && (
-                                                        <div
-                                                            className="absolute bg-white shadow-md rounded-lg p-2 mt-2 top-5 z-50"
-                                                        >
-                                                            <button
-                                                                onClick={() => handleDeleteMessage(msg.id)}
-                                                                className="text-red-500"
-                                                            >
-                                                                Delete
-                                                            </button>
-                                                        </div>
-                                                    )}
-
-                                                </div>
-                                            )
-                                        }
                                         <div
 
-                                            className={`w-fit max-w-[550px] ${msg.sender === currentChat.current_user_id ? " text-white ms-auto rounded-l-lg rounded-tr-lg" : " text-white rounded-r-lg rounded-tl-lg"
+                                            className={`w-fit max-w-[550px] flex items-center ${msg.sender === currentChat.current_user_id ? " text-white ms-auto rounded-l-lg rounded-tr-lg" : " text-white rounded-r-lg rounded-tl-lg"
                                                 } mb-2`}
                                         >
+                                            <div className={`flex items-center peer gap-x-2 ${msg.sender === currentChat.current_user_id && 'ms-auto'} `}>
+                                                {/* Transcription Icon - Available for all voice messages */}
+                                                <img src={transcriptionIcon}
+                                                    onClick={() => toggleTranscription(msg.id, msg.voice_url)}
+                                                    width="16px"
+                                                    height="16px"
+                                                    className="hover:scale-110 transition-transform w-4 h-4 cursor-pointer"
+                                                    title={isTranscribing[msg.id] ? 'Transcribing...' : transcription[msg.id] ? 'Hide Transcription' : 'Show Transcription'}
+                                                    alt="transcription" />
 
+                                                {
+                                                    msg.sender === currentChat.current_user_id && (
+                                                        <div
+                                                            className="flex items-center relative gap-2 flex-shrink-0"
+                                                        >
+                                                            <svg onClick={() => toggleMenu(index)} width="16px" height="16px" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" fill="#000000" className="bi bi-three-dots-vertical cursor-pointer">
+                                                                <path d="M9.5 13a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0zm0-5a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0zm0-5a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0z" />
+                                                            </svg>
 
+                                                            {showMenu === index && (
+                                                                <div
+                                                                    className="absolute bg-white shadow-md rounded-lg p-2 mt-2 top-5 z-50"
+                                                                >
+                                                                    <button
+                                                                        onClick={() => handleDeleteMessage(msg.id)}
+                                                                        className="text-red-500"
+                                                                    >
+                                                                        Delete
+                                                                    </button>
+                                                                </div>
+                                                            )}
+
+                                                        </div>
+                                                    )
+                                                }
+                                            </div>
 
                                             <audio
                                                 controls
@@ -356,7 +518,15 @@ const ChatWindow = () => {
                                                 <source src={msg.voice_url} type="audio/webm" />
                                                 Your browser does not support the audio element.
                                             </audio>
+
                                         </div>
+
+                                        {/* Show transcription if available */}
+                                        {transcription[msg.id] && (
+                                            <div style={transcriptionStyles} className={`w-fit ${msg.sender === currentChat.current_user_id ? "ms-auto" : ""}`}>
+                                                {transcription[msg.id]}
+                                            </div>
+                                        )}
                                     </div>
                                 );
                             }
@@ -369,7 +539,7 @@ const ChatWindow = () => {
                             <div className="text-sm text-gray-500">{otherUserTyping}</div>
                         )}
                     </div>
-                    
+
 
                     {/* input message box */}
 
@@ -390,6 +560,9 @@ const ChatWindow = () => {
                         </button>
                         <button onClick={() => setIsModalOpen(true)} className="bg-green-500 text-white py-1 px-4 rounded-md ml-2">
                             Record
+                        </button>
+                        <button onClick={handleAutoReply} className="bg-yellow-500 text-white py-1 px-4 rounded-md ml-2">
+                            Auto Reply
                         </button>
                     </div>
 
